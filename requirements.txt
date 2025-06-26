@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+faiss-cpu
+requests
+transformers
+sentence-transformers
+python-dotenv
+datasets
