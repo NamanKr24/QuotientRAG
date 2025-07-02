@@ -44,6 +44,8 @@ Accessible on [Hugging Face Spaces](https://huggingface.co/spaces/namankr24/Quot
 <p align="center">
   <img src="app_preview.png" alt="QuotientRAG demo" width="75%">
 </p>
+---
+
 
 ## 🛠️ Tech Stack
 
