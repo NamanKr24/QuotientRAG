@@ -58,7 +58,7 @@ def load_embedding_model_and_index():
 df = load_dataframe()
 model, index = load_embedding_model_and_index()
 
-def query_huggingface_llm(payload, model_id="HuggingFaceH4/zephyr-7b-beta"):
+def query_huggingface_llm(payload, model_id="mistralai/Mistral-7B-Instruct-v0.2"):
     API_URL = f"https://api-inference.huggingface.co/models/{model_id}"
     headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
@@ -143,7 +143,7 @@ st.set_page_config(page_title="QuotientRAG", layout="wide")
 st.title("📚 QuotientRAG")
 
 st.markdown("""
-This application retrieves relevant quotes based on your query and uses a Large Language Model (Zephyr-7b-beta) to generate a coherent answer.
+This application retrieves relevant quotes based on your query and uses a Large Language Model (Mistral-7B-Instruct) to generate a coherent answer.
 The embedding model has been fine-tuned on a dataset of English quotes.
 """)
 
