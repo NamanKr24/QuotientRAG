@@ -5,18 +5,13 @@ import faiss
 import os
 import requests
 import json
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from sentence_transformers import SentenceTransformer
+import torch
 from dotenv import load_dotenv
 
 load_dotenv()
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-if not HF_API_TOKEN:
-    try:
-        HF_API_TOKEN = st.secrets["HF_API_TOKEN"]
-    except AttributeError:
-        st.error("Hugging Face API token not found. Please set it as an environment variable (HF_API_TOKEN) or in Streamlit secrets.")
-        st.stop()
 
 @st.cache_data
 def load_dataframe():
@@ -55,31 +50,23 @@ def load_embedding_model_and_index():
         st.error(f"Error loading models or index: {e}")
         st.stop()
 
+@st.cache_resource
+def load_llm():
+    """Loads a truly open and fast LLM."""
+    llm_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    
+    tokenizer = AutoTokenizer.from_pretrained(llm_id)
+    model = AutoModelForCausalLM.from_pretrained(llm_id, device_map="auto")
+    return tokenizer, model
+
 df = load_dataframe()
-model, index = load_embedding_model_and_index()
+embed_model, index = load_embedding_model_and_index()
+llm_tokenizer, llm = load_llm()
 
-def query_huggingface_llm(payload, model_id="HuggingFaceH4/zephyr-7b-beta"):
-    API_URL = f"https://api-inference.huggingface.co/models/{model_id}"
-    headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-
-    try:
-        with st.spinner("Connecting to Hugging Face LLM..."):
-            response = requests.post(API_URL, headers=headers, json=payload)
-            response.raise_for_status()
-            return response.json()
-    except requests.exceptions.HTTPError as err:
-        st.error(f"HTTP error occurred: {err}")
-        st.write(f"Response content: {response.text}")
-        if response.status_code == 503:
-            st.warning("Model is currently loading on Hugging Face servers. This can take a minute. Please retry shortly.")
-        return None
-    except Exception as err:
-        st.error(f"An unexpected error occurred while querying the LLM: {err}")
-        return None
 
 def retrieve_quotes(user_query, top_k=5):
     """Embeds the query and searches the FAISS index for relevant quotes."""
-    query_embedding = model.encode([user_query])
+    query_embedding = embed_model.encode([user_query])
     
     distances, indices = index.search(np.array(query_embedding).astype('float32'), top_k) 
 
@@ -98,7 +85,7 @@ def retrieve_quotes(user_query, top_k=5):
     return results
 
 def generate_response(user_query, retrieved_quotes):
-    """Generates a response using the LLM based on retrieved quotes."""
+    """Generates a response using the LLM directly on the Space."""
     if not retrieved_quotes:
         return "I couldn't find any relevant quotes for your query. Please try rephrasing."
 
@@ -109,41 +96,39 @@ def generate_response(user_query, retrieved_quotes):
 
     prompt = f"""You are an intelligent assistant that provides insightful responses based on given quotes.
 The user is looking for quotes related to: "{user_query}"
-
 Here are some relevant quotes I found:
 {context_quotes}
-
 Based on the above quotes and the user's request, provide a concise and helpful answer. You can either directly present the most relevant quote(s), or synthesize information from them to answer the user's implicit question. If the quotes don't directly answer the query, explain that but still provide the most relevant ones.
-
 Response:
 """
+    
+    input_ids = llm_tokenizer(prompt, return_tensors="pt").to(llm.device)
+    
+    with torch.no_grad():
+        output = llm.generate(
+            **input_ids, 
+            max_new_tokens=700, 
+            temperature=0.7,
+            do_sample=True,
+            top_k=50,
+            top_p=0.95,
+            pad_token_id=llm_tokenizer.eos_token_id, 
+            early_stopping=True,
+            no_repeat_ngram_size=2 # This is the key to preventing loops
+        )
+    
+    generated_text = llm_tokenizer.decode(output[0], skip_special_tokens=True)
 
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 700,
-            "temperature": 0.7,
-            "do_sample": True,
-            "return_full_text": False
-        }
-    }
-
-    llm_response = query_huggingface_llm(payload)
-
-    if llm_response and isinstance(llm_response, list) and len(llm_response) > 0:
-        generated_text = llm_response[0].get('generated_text', '').strip()
-        if generated_text.startswith(prompt.strip()):
-            generated_text = generated_text[len(prompt.strip()):].strip()
-        return generated_text
-    else:
-        return "I apologize, but I couldn't generate a coherent response at this moment. This might be due to API issues or the model loading on Hugging Face. Please try again or rephrase your query."
+    if generated_text.startswith(prompt.strip()):
+        generated_text = generated_text[len(prompt.strip()):].strip()
+    return generated_text
 
 
 st.set_page_config(page_title="QuotientRAG", layout="wide")
 st.title("📚 QuotientRAG")
 
 st.markdown("""
-This application retrieves relevant quotes based on your query and uses a Large Language Model (Zephyr-7b-beta) to generate a coherent answer.
+This application retrieves relevant quotes based on your query and uses a Large Language Model (Mistral-7B-Instruct-v0.2) to generate a coherent answer.
 The embedding model has been fine-tuned on a dataset of English quotes.
 """)
 
